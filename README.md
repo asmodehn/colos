@@ -44,7 +44,7 @@ Constraints
 ===========
 
 - Keep it in one unique package, usable as a library by anyone wanting to build something on top
-- Keep OS requirement minimal (lowest commin denominator, including embedded RTOSes, and otheresoteric systems out there)
+- Keep OS requirement minimal (lowest common denominator, including embedded RTOSes, and otheresoteric systems out there)
 - Keep it local, since we rely on the OS. Network included.
 - Expect the OS & HW to fail, permanently monitor, and eventually recover.
 - Let the python code errors be managed by usual python tools.
