@@ -1,3 +1,6 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
 # The aim of this package is to :
 # - launch glances to get a nice UI on whats happening on the system
 # - launch a monitoring process to keep track of the colos system ( with maybe extra interface processes )

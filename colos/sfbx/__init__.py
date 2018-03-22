@@ -1,3 +1,6 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
 # The aim of this package is to :
 # - guarantee protected code execution is safe and *will* happen (eventually)
 # - report usage via colosstat

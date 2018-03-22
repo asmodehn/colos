@@ -1,3 +1,6 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
 # The aim of this package isto :
 # - report to a central (for now) website different statistics
 # - ensure anonymity is preserved in these statistics as much as possible

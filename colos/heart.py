@@ -1,3 +1,6 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
 #  very basic python daemon, keeping colos alive
 import argparse
 import sys
@@ -7,12 +10,16 @@ import lockfile
 import daemon
 import asyncio
 
+import pathlib
+
+
 def shutdown(signum, frame):  # signum and frame are mandatory
     sys.exit(0)
 
 
 # Internal coroutines
 async def do_smthg(future):
+    print('sleep1')
     await asyncio.sleep(1)
     # future.set_result('Future is done!')
 
@@ -25,32 +32,61 @@ def main():
 
     def got_result(future):
         print(future.result())
+        print("done!")
         loop.stop()
 
     future.add_done_callback(got_result)
     try:
+        print("looping")
         loop.run_forever()
     finally:
         loop.close()
 
+    print("done")
+
 
 # IPC Interface
-def start(nodaemon=False):
+def start(nodaemon=False, noroot=False):
+    print("nodaemon {}".format(nodaemon))
+    print("noroot {}".format(noroot))
+
     if nodaemon:
-        main()
+        print("strted as normal process")
+        res = main()
     else:
         # TODO : implement sensible defaults based on platform
-        os.makedirs('/var/run/colos/.heart', exist_ok=True)
+
+        chroot_dir = '/var/run/colos/.heart'
+        working_dir = os.getcwd()
+        detach_me = not noroot
+
+        if os.access('/var/run', os.W_OK):  # we re probably root, anyway we have access to /var/run, so lets do this !
+            path = pathlib.Path(chroot_dir)
+            path.mkdir(parents=True, exist_ok=True)
+        elif noroot:  # if it is started as non-root (usually for testing), we allow running in current dir.
+            chroot_dir = None
+        else:
+            print("Current user cannot access /var/run. Try starting the daemon with --noroot option")
+            return 1
+
+
+        print("starting as daemon process")
         with daemon.DaemonContext(
-            chroot_directory=None,
-            working_directory='/var/lib/colos/.heart',
+            chroot_directory=chroot_dir,
+            working_directory=working_dir,
+            detach_process=detach_me,
+            #uid=1001,
+            #gid=777,
+            #umask=0o002,
             signal_map={
                 signal.SIGTERM: shutdown,
                 signal.SIGTSTP: shutdown
             },
-            pidfile=lockfile.FileLock('/var/run/spam.pid')
+            pidfile=lockfile.FileLock('/var/run/heart.pid')
         ):
-            main()
+            res = main()
+
+    return res
 
 def stop():
     pass
@@ -70,19 +106,21 @@ if '__main__' == __name__:
                         help='stops the heart daemon')
     parser.add_argument('-r', '--reload', action='store_true',
                         help='reloads the heart daemon')
-    parser.add_argument('--nodetach', action='store_true',
+    parser.add_argument('--nodaemon', action='store_true',
                         help='runs the heart daemon in the current process.')
+    parser.add_argument('--noroot', action='store_true',
+                        help='runs the heart daemon as the current user.')
 
     args = parser.parse_args()
-    print(args)
+    #print(args)
 
-    if '--stop' in args:
-        stop()
-    elif '--reload' in args:
-        reload()
+    res=127
+
+    if args.stop:
+        res = stop()
+    elif args.reload:
+        res = reload()
     else:
-        if '--nodetach' in args:
-            start(nodaemon=True)
-        else:
-            start()
+        res = start(nodaemon=args.nodaemon, noroot=args.noroot)
 
+    sys.exit(res)
