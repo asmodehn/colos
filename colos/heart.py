@@ -22,7 +22,7 @@ async def do_smthg(future):
     print('sleep1')
     await asyncio.sleep(1)
     # future.set_result('Future is done!')
-
+    asyncio.ensure_future(do_smthg(future))
 
 # eventloop
 def main():
@@ -35,7 +35,7 @@ def main():
         print("done!")
         loop.stop()
 
-    future.add_done_callback(got_result)
+    #future.add_done_callback(got_result)
     try:
         print("looping")
         loop.run_forever()
@@ -51,7 +51,7 @@ def start(nodaemon=False, noroot=False):
     print("noroot {}".format(noroot))
 
     if nodaemon:
-        print("strted as normal process")
+        print("started as normal process")
         res = main()
     else:
         # TODO : implement sensible defaults based on platform
@@ -60,7 +60,7 @@ def start(nodaemon=False, noroot=False):
         working_dir = os.getcwd()
         detach_me = not noroot
 
-        if os.access('/var/run', os.W_OK):  # we re probably root, anyway we have access to /var/run, so lets do this !
+        if os.access('/var/run', os.W_OK | os.X_OK):  # we re probably root, anyway we have access to /var/run, so lets do this !
             path = pathlib.Path(chroot_dir)
             path.mkdir(parents=True, exist_ok=True)
         elif noroot:  # if it is started as non-root (usually for testing), we allow running in current dir.
@@ -70,7 +70,7 @@ def start(nodaemon=False, noroot=False):
             return 1
 
 
-        print("starting as daemon process")
+        print("starting as daemon process, detaching from terminal. Otherwise try the --nodaemon option")
         with daemon.DaemonContext(
             chroot_directory=chroot_dir,
             working_directory=working_dir,
