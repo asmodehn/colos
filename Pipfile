@@ -11,6 +11,7 @@ psutil = "*"
 glances = "*"
 ptyprocess = "*"
 python-daemon = "*"
+pytest-asyncio = "*"
 
 [dev-packages]
 

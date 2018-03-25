@@ -2,6 +2,8 @@
 # -*- coding: utf-8 -*-
 
 import asyncio
+import runpy
+
 import click
 
 from . import heart
@@ -33,11 +35,13 @@ def hello(count, name):
 
 async def heartlaunch(wait=5):
     """
-    Wait for colosmntr to start, and upon success detach from foreground ( to run as daemon )
+    Wait for colosmntr to start, launch heart, and upon success detach from foreground ( to run as daemon )
     :param wait: time to wait for colosmntr to be launched before aborting
     :return:
     """
+    # TODO : wait for mntr
 
+    runpy.run_module('colos.heart', init_globals=None)
 
 
 async def coloslaunch():

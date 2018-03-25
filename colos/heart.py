@@ -3,39 +3,130 @@
 
 #  very basic python daemon, keeping colos alive
 import argparse
+import inspect
+import multiprocessing
+import queue
 import sys
 import os
 import signal
+
+import functools
 import lockfile
-import daemon
 import asyncio
 
 import pathlib
+import collections
+
+# import oslash
 
 
-def shutdown(signum, frame):  # signum and frame are mandatory
-    sys.exit(0)
+# relative import
+try:
+    # importing our locally patched daemon module
+    from . import _daemon as daemon
+except SystemError:
+    import _daemon as daemon
 
 
-# Internal coroutines
-async def do_smthg(future):
+# Internal coroutines implementing state transitions
+# as triggered by commands
+
+
+#@cmd('start', origin_state_list=['init'])
+async def running(future):
     print('sleep1')
     await asyncio.sleep(1)
-    # future.set_result('Future is done!')
-    asyncio.ensure_future(do_smthg(future))
+    asyncio.ensure_future(running(future))
+
+# TODO : coroutines implementing lambda calculus | kernel + continuation
+# TODO : LATER implement process calculi in coroutines ( via different future chains ). Might not be efficient as multiprocess, but still possible.
+
+
+#@cmd('stop', origin_state_list=['running'])
+async def dothis():
+    print ("doing this")
+    return 'This is done!'
+
+async def dothat():
+    print ("doing that")
+    return 'That is done!'
+
+#@cmd('stop', origin_state_list=['running'])
+async def cleanup():
+    print("cleaning up...")
+    return 'Future is done!'
+
+
+async def receive(loop, end_future, **coros):
+    """
+    Loops checking the queue for messages
+    :param end_future: future set when everything is done
+    :param coros: List of coroutines callablefrom outside : our IPC API
+    :return:
+    """
+    try:
+        print("checking messages...")
+        try:
+            m = msgs.get_nowait()
+            if m in coros:  # keeping linearizability of coro calls
+                print(m)
+                loop.create_task(coros.get(m)())
+        except queue.Empty:
+            pass
+        except asyncio.QueueEmpty:
+            pass
+        if end_future.done():
+            # doing clean shutdown
+            pass
+        else:
+            # keep looping
+            await asyncio.sleep(1)  # TODO PID Controller to manage queue length
+            asyncio.ensure_future(receive(loop, end_future, **coros))
+    except asyncio.CancelledError:
+        print("Receive Task has been cancelled. terminating...")
+        pass
+
+
+
+def cancel_receive(receive_task):
+    def signal_hndl(signum, frame):
+        print("Signal {signum} caught at {frame}. cancelling receive...".format(**locals()))
+        receive_task.cancel()
+    return signal_hndl
+
+
 
 # eventloop
-def main():
+def mainsub():
     loop = asyncio.get_event_loop()
-    future = asyncio.Future()
-    asyncio.ensure_future(do_smthg(future))
+    done = asyncio.Future()
+
+
+
+    receive_task = asyncio.ensure_future(receive(loop, done, **{
+        dothis.__name__:  dothis,
+        dothat.__name__: dothat,
+        cleanup.__name__: cleanup,
+    }))
+
+    async_signal_map = {
+        signal.SIGTERM: cancel_receive(receive_task),
+        signal.SIGTSTP: cancel_receive(receive_task),
+        signal.SIGINT: cancel_receive(receive_task),
+    }
+
+    #preparing async signal handlers
+    daemon.set_signal_handlers(async_signal_map)
+
 
     def got_result(future):
         print(future.result())
         print("done!")
+        msgs.join()
         loop.stop()
 
-    #future.add_done_callback(got_result)
+    # setting up callback for termination
+    done.add_done_callback(got_result)
     try:
         print("looping")
         loop.run_forever()
@@ -45,14 +136,28 @@ def main():
     print("done")
 
 
-# IPC Interface
-def start(nodaemon=False, noroot=False):
+# def sigchld():
+
+
+
+# def mainsub():
+
+
+
+def main(nodaemon=False, noroot=False):
     print("nodaemon {}".format(nodaemon))
     print("noroot {}".format(noroot))
 
+
     if nodaemon:
-        print("started as normal process")
-        res = main()
+        daemon.set_signal_handlers(signal_map)
+
+        try:
+            print("starting as normal process...")
+            res = mainsub()
+        except KeyboardInterrupt:
+            # should be handled by signal handlers...
+            res = 127
     else:
         # TODO : implement sensible defaults based on platform
 
@@ -78,24 +183,85 @@ def start(nodaemon=False, noroot=False):
             #uid=1001,
             #gid=777,
             #umask=0o002,
-            signal_map={
-                signal.SIGTERM: shutdown,
-                signal.SIGTSTP: shutdown
-            },
+            signal_map=signal_map,
             pidfile=lockfile.FileLock('/var/run/heart.pid')
         ):
-            res = main()
+            try:
+                res = mainsub()
+            except KeyboardInterrupt:
+                # should be handled by signal handlers...
+                res = 127
 
     return res
 
-def stop():
+
+
+###############
+# IPC Interface
+###############
+
+# Design : we use oly the Signal interface to communicate and supervise processes.
+# more complete communication pattern will be handled somewhere else
+
+#ref : http://www.open-std.org/jtc1/sc22/wg14/www/standards.html
+# SIGINT : interrupt (terminal Ctrl-C) -> usually graceful shutdown  "user initiated happy"
+# SIGQUIT : dump core  (terminal Ctrl-|) "user initiated unhappy"
+# SIGTERM : cleanup and terminate
+# SIGTSTP : interactively pausing (terminal Ctrl-Z)
+# SIGHUP : Hangup (terminal Ctrl-D)
+# SIGSTOP / SIGCONT : pause & resume process (OS)
+
+# signals send messages to the queue, just like any other process
+msgs = queue.Queue()
+
+def shutdown(signum, frame):  # signum and frame are mandatory
+    # we need here to make every attempt to shutdown properly
+    msgs.put('cleanup')
     pass
+
+def state(signum, frame):  # signum and frame are mandatory
+    pass
+
+signal_map = {
+    signal.SIGTERM: shutdown,
+    signal.SIGTSTP: shutdown,
+    signal.SIGINT : shutdown,
+}
+
+
+############
+# Public API
+############
+
+def start(children, nodaemon = False, noroot=False):
+    """
+    Starting heart (will spawn a sub process)
+    :param nodaemon:
+    :param noroot:
+    :param children: processes to launch and supervise)
+    :return:
+    """
+    main(nodaemon=nodaemon, noroot=noroot)
+
+def stop():
+    """
+    Stopping heart (using IPC)
+    :return:
+    """
+    pass  # TODO
 
 def reload():
-    pass
+    """
+    Reloading heart (using IPC)
+    :return:
+    """
+    pass  #TODO
 
 
+
+###############
 # CLI interface
+###############
 # --start (default)
 # --stop
 # --reload
@@ -114,13 +280,13 @@ if '__main__' == __name__:
     args = parser.parse_args()
     #print(args)
 
-    res=127
+    res = 127
 
     if args.stop:
         res = stop()
     elif args.reload:
         res = reload()
     else:
-        res = start(nodaemon=args.nodaemon, noroot=args.noroot)
+        res = start(children = [], nodaemon=args.nodaemon, noroot=args.noroot)
 
     sys.exit(res)
