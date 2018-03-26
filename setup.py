@@ -96,6 +96,8 @@ setuptools.setup(name='colos',
     # this is better than using package data ( since behavior is a bit different from distutils... )
     include_package_data=True,  # use MANIFEST.in during install.
     install_requires=[
+        'lockfile',
+        'python-daemon',
     ],
     extras_require={
     },

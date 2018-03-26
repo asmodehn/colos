@@ -4,6 +4,7 @@
 #  very basic python daemon, keeping colos alive
 import argparse
 import inspect
+import logging
 import multiprocessing
 import queue
 import sys
@@ -151,6 +152,11 @@ def mainsub():
 
 
 def main(nodaemon=False, noroot=False):
+    lh = logging.StreamHandler()
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    logger.addHandler(lh)
+
     print("nodaemon {}".format(nodaemon))
     print("noroot {}".format(noroot))
 
@@ -174,6 +180,7 @@ def main(nodaemon=False, noroot=False):
         if os.access('/var/run', os.W_OK | os.X_OK):  # we re probably root, anyway we have access to /var/run, so lets do this !
             path = pathlib.Path(chroot_dir)
             path.mkdir(parents=True, exist_ok=True)
+            working_dir = chroot_dir
         elif noroot:  # if it is started as non-root (usually for testing), we allow running in current dir.
             chroot_dir = None
         else:
@@ -190,13 +197,17 @@ def main(nodaemon=False, noroot=False):
             #gid=777,
             #umask=0o002,
             signal_map=signal_map,
-            pidfile=lockfile.FileLock('/var/run/heart.pid')
+            pidfile=lockfile.FileLock('/var/run/heart.pid'),
+            stderr=lh.stream
         ):
             try:
+                logger.warning("UID : %s" % str(os.getuid()))
+                logger.warning("groups: %s" % str(os.getgroups()))
                 res = mainsub()
             except KeyboardInterrupt:
                 # should be handled by signal handlers...
                 res = 127
+                logger.warning("Keyboard Interrupt")
 
     return res
 
