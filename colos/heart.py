@@ -57,50 +57,50 @@ async def cleanup():
     return 'Future is done!'
 
 
-async def receive(loop, end_future, **coros):
-    """
-    Loops checking the queue for messages
-    :param end_future: future set when everything is done
-    :param coros: List of coroutines callablefrom outside : our IPC API
-    :return:
-    """
-    try:
-        print("checking messages...")
-        try:
-            m = msgs.get_nowait()
-            if m in coros:  # keeping linearizability of coro calls
-                print(m)
-                loop.create_task(coros.get(m)())
-        except queue.Empty:
-            pass
-        except asyncio.QueueEmpty:
-            pass
-        if end_future.done():
-            # doing clean shutdown
-            pass
-        else:
-            # keep looping
-            await asyncio.sleep(1)  # TODO PID Controller to manage queue length
-            asyncio.ensure_future(receive(loop, end_future, **coros))
-    except asyncio.CancelledError:
-        print("Receive Task has been cancelled. terminating...")
-        pass
-
-
-
-def cancel_receive(receive_task):
-    def signal_hndl(signum, frame):
-        print("Signal {signum} caught at {frame}. cancelling receive...".format(**locals()))
-        receive_task.cancel()
-    return signal_hndl
-
-
-
 # eventloop
 def mainsub():
+    """
+    Main function, potentially running in a child process or a thread
+    :return:
+    """
     loop = asyncio.get_event_loop()
     done = asyncio.Future()
 
+    # communicating via process variable or Signals only
+    receive_task = None  # no task started yet
+
+    async def receive(loop, end_future, **coros):
+        """
+        Loops checking the queue for messages
+        :param end_future: future set when everything is done
+        :param coros: List of coroutines callablefrom outside : our IPC API
+        :return:
+        """
+        nonlocal receive_task
+        try:
+            print("checking messages...")
+            try:
+                m = msgs.get_nowait()
+                if m in coros:  #  keeping linearizability of coro calls
+                    print(m)
+                    loop.create_task(coros.get(m)())
+            except queue.Empty:
+                pass
+            except asyncio.QueueEmpty:
+                pass
+            if end_future.done():
+                # doing clean shutdown
+                print("end future")
+                pass
+            else:
+                # keep looping
+                await asyncio.sleep(1)  # TODO PID Controller to manage queue length
+                receive_task = asyncio.ensure_future(receive(loop, end_future, **coros))
+                print("scheduled {receive_task}".format(**locals()))
+        except asyncio.CancelledError:
+            print("Receive Task has been cancelled. terminating...")
+            await cleanup()
+            loop.stop()
 
 
     receive_task = asyncio.ensure_future(receive(loop, done, **{
@@ -108,11 +108,17 @@ def mainsub():
         dothat.__name__: dothat,
         cleanup.__name__: cleanup,
     }))
+    print("scheduled {receive_task}".format(**locals()))
+
+    def signal_hndl(signum, frame):
+        nonlocal receive_task
+        print("Signal {signum} caught at {frame}. cancelling receive {receive_task}...".format(**locals()))
+        receive_task.cancel()
 
     async_signal_map = {
-        signal.SIGTERM: cancel_receive(receive_task),
-        signal.SIGTSTP: cancel_receive(receive_task),
-        signal.SIGINT: cancel_receive(receive_task),
+        signal.SIGTERM: signal_hndl,
+        signal.SIGTSTP: signal_hndl,
+        signal.SIGINT: signal_hndl,
     }
 
     #preparing async signal handlers
@@ -212,6 +218,7 @@ def main(nodaemon=False, noroot=False):
 # SIGSTOP / SIGCONT : pause & resume process (OS)
 
 # signals send messages to the queue, just like any other process
+# TODO : CAREFUL the nature of the queue (threading; multiprocessing, async)
 msgs = queue.Queue()
 
 def shutdown(signum, frame):  # signum and frame are mandatory
